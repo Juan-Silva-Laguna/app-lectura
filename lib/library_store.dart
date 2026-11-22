@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
+import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
@@ -100,7 +101,13 @@ class LibraryStore {
     final target = File(p.join(root.path, 'books', '$id.pdf'));
     var committed = false;
     try {
-      await source.pipe(staging.openWrite());
+      final sink = staging.openWrite();
+      try {
+        await source.forEach((chunk) => sink.add(Uint8List.fromList(chunk)));
+        await sink.flush();
+      } finally {
+        await sink.close();
+      }
       final digest = (await sha256.bind(staging.openRead()).first).toString();
       final existing = await database.query(
         'books',
