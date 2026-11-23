@@ -1,21 +1,34 @@
-# Entre lineas
+# PROVIT
 
 Primera version de un lector personal de PDF para **iOS y Android**, construido
 con Flutter. No es una app web ni una version lista para publicar en tiendas.
 La biblioteca empieza vacia: no incluye libros, cuentas ni un backend.
+Eslogan: **Cada pagina tiene un proposito**.
 
 ## Funciones implementadas
 
 - Importar un PDF desde el selector nativo, darle un nombre y abrirlo. La copia
   se realiza por streaming en almacenamiento privado, incluso con URI de
   documentos de Android. Se detectan duplicados por SHA-256.
-- Biblioteca local y renombrado. El nombre del libro nunca se usa como ruta.
+- Biblioteca local, renombrado y eliminacion completa. Eliminar un libro borra
+  la copia privada, progreso, texto extraido, notas y resaltados relacionados.
+  El nombre del libro nunca se usa como ruta.
 - **Lectura**: texto adaptable por pagina, fuentes Lora y Atkinson incluidas,
   tamano e interlineado configurables, temas papel/sepia/noche.
-- **PDF original**: pagina renderizada con su diagramacion y zoom.
+- **PDF original**: es el modo de apertura predeterminado. Conserva la
+  diagramacion y permite zoom. Desde el menu superior puede activarse el pincel
+  para resaltar a mano alzada, elegir color y grosor, deshacer trazos y confirmar
+  con un check. Tambien funciona en paginas escaneadas sin OCR.
 - En Lectura: mantener pulsado el texto y elegir **Resaltar**, **Anotar** o
   **Guardar aqui**. Lista de anotaciones, salto al fragmento, edicion de notas y
   borrado con confirmacion. No se modifica el PDF original.
+- Al confirmar un resaltado del PDF se puede indicar opcionalmente que se
+  entendio. La idea, pagina y posicion quedan en la misma lista de fragmentos
+  que las anotaciones de Lectura.
+- El menu permite exportar una copia PDF con las paginas y trazos resueltos,
+  precedidos por hojas de resumen con notas de Lectura y PDF original. Los
+  trazos se insertan como objetos PDF nativos sobre copias exactas de las
+  paginas originales; no se redimensionan ni se rasterizan.
 - Posicion automatica al terminar un desplazamiento y al cambiar de pagina.
   **Guardar aqui** conserva el inicio exacto del fragmento seleccionado.
 - Indice navegable cuando el PDF lo incluye, y salto a numero de pagina.
@@ -31,8 +44,10 @@ La biblioteca empieza vacia: no incluye libros, cuentas ni un backend.
 - El modo adaptable respeta el orden extraido por PDFium y conserva offsets.
   No es una conversion editorial perfecta: tablas, columnas, guiones de final
   de linea, encabezados y formulas pueden necesitar tratamiento posterior.
-- Resaltados y notas se muestran en **Lectura**, no superpuestos al PDF original.
-  No se genera un PDF anotado para exportacion.
+- Las notas de texto se muestran en **Lectura**. Los trazos del PDF original se
+  guardan como capas locales. El archivo importado no se modifica. Al exportar
+  se genera una copia nueva y se agregan trazos vectoriales transparentes
+  directamente sobre las paginas, conservando sus medidas, margenes y texto.
 - La posicion en PDF original se conserva por pagina, no por zoom/coordenada.
   No se inventan capitulos o secciones si el archivo no incluye un indice.
 - La voz se instala mediante los ajustes del sistema, no desde un servidor de
@@ -46,7 +61,7 @@ La biblioteca empieza vacia: no incluye libros, cuentas ni un backend.
 - No hay sincronizacion, exportacion/importacion de backups ni cifrado adicional
   de la base de datos. Desinstalar o perder el dispositivo puede perder las notas.
   Las copias automaticas del sistema dependen de su configuracion.
-- No hay eliminacion de libros ni busqueda global en esta primera entrega.
+- No hay busqueda global en esta primera entrega.
 - No hay garantias de rendimiento para libros grandes o de accesibilidad completa
   hasta medirlas en dispositivos reales.
 
@@ -54,15 +69,19 @@ La biblioteca empieza vacia: no incluye libros, cuentas ni un backend.
 
 | Componente | Responsabilidad |
 | --- | --- |
-| `lib/library_store.dart` | SQLite versionada, copia privada, hash, notas, preferencias y progreso |
+| `lib/library_store.dart` | SQLite versionada, copia/eliminacion privada, hash, notas, preferencias y progreso |
 | `lib/pdf_book.dart` | Apertura/validacion de PDF y extraccion de texto por pagina |
 | `lib/narrator.dart` | Adaptador TTS local, filtrado de voces, fragmentacion y cancelacion |
 | `lib/models.dart` | Modelos y offsets UTF-16 compartidos por lector, PDF y voz |
+| `lib/original_pdf_page.dart` | Capa de resaltado geometrico sobre el PDF renderizado |
+| `lib/pdf_export.dart` | Generacion de copias PDF con trazos y hojas de notas |
 | `lib/reflow_page.dart` | Texto seleccionable, resaltados y restauracion visual del ancla |
 | `lib/reader_screen.dart` | Ciclo de lectura, navegacion y persistencia |
+| `lib/design_system/` | Identidad visual PROVIT (colores, tipografia, espaciado, radio y componentes reutilizables) |
 
 Los PDF se guardan con UUID en `ApplicationSupport/library/books`.
-`library.sqlite` contiene `books`, `page_text`, `annotations` y `settings`.
+`library.sqlite` contiene `books`, `page_text`, `annotations`,
+`pdf_highlights` y `settings`.
 Se guardan rutas relativas para soportar cambios del contenedor de iOS.
 El texto extraido se almacena de forma inmutable por pagina: cambiar la fuente
 no invalida notas ni posiciones. Cada nota conserva pagina, offsets, cita y
@@ -151,10 +170,11 @@ Validacion ejecutada en Windows: `flutter analyze` sin incidencias y **13
 pruebas aprobadas** con `flutter test --reporter expanded --timeout 60s`.
 No se ha generado un APK/IPA ni ejecutado la app en un iPhone o Android.
 
-Las pruebas cubren importacion privada y rollback, duplicados, SQLite tras
-reabrir, anclas, notas, preferencias, filtrado de voces, cancelacion/error TTS,
-dialogos y restauracion de lectura. `pdf_book_test.dart` crea un PDF propio de
-dos paginas y verifica importacion, texto, renderizado, indice y reanudacion.
+Las pruebas cubren importacion privada y rollback, duplicados, migracion de
+SQLite, eliminacion completa, resaltados persistentes y validacion geometrica,
+anclas, notas, preferencias, filtrado de voces, cancelacion/error TTS, dialogos
+y restauracion de lectura. `pdf_book_test.dart` crea un PDF propio de dos
+paginas y verifica importacion, texto, renderizado, indice y reanudacion.
 Los callbacks TTS son simulados en tests: no prueban la calidad de una voz real.
 
 Antes de considerar la app funcionalmente aceptada en ambas plataformas:

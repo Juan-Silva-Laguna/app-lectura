@@ -1,12 +1,16 @@
 import 'dart:async';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:pdfrx/pdfrx.dart';
 
+import 'design_system/provit_design_system.dart';
 import 'library_store.dart';
 import 'models.dart';
 import 'narrator.dart';
+import 'original_pdf_page.dart';
 import 'pdf_book.dart';
+import 'pdf_export.dart';
 import 'reader_settings_sheet.dart';
 import 'reflow_page.dart';
 import 'ui_helpers.dart';
@@ -32,11 +36,19 @@ class _ReaderScreenState extends State<ReaderScreen>
   String _text = '';
   ReaderSettings _settings = const ReaderSettings();
   List<Annotation> _annotations = [];
+  List<PdfHighlight> _pdfHighlights = [];
+  List<PdfHighlight> _allPdfHighlights = [];
+  List<PdfHighlightStroke> _draftStrokes = [];
   List<PdfOutlineNode> _outline = [];
   bool _loading = true;
-  bool _original = false;
+  bool _original = true;
+  bool _highlighting = false;
+  Color _highlightColor = ProvitPalette.highlightWarm;
+  double _strokeWidth = 0.025;
   bool _speaking = false;
   bool _preparingVoice = false;
+  bool _exporting = false;
+  double? _exportProgress;
   bool _pausedNarration = false;
   bool _closing = false;
   bool _allowPop = false;
@@ -60,6 +72,7 @@ class _ReaderScreenState extends State<ReaderScreen>
       opened = await PdfBook.open(widget.store, widget.book);
       final settings = await widget.store.settings();
       final notes = await widget.store.annotations(widget.book.id);
+      final highlights = await widget.store.pdfHighlights(widget.book.id);
       final outline = await opened.document.loadOutline();
       final text = await opened.text(_reading.page);
       if (!mounted) {
@@ -70,6 +83,10 @@ class _ReaderScreenState extends State<ReaderScreen>
         _pdf = opened;
         _settings = settings;
         _annotations = notes;
+        _allPdfHighlights = highlights;
+        _pdfHighlights = highlights
+            .where((highlight) => highlight.page == _reading.page)
+            .toList();
         _outline = outline;
         _text = text;
         _targetOffset = _reading.offset.clamp(0, text.length);
@@ -172,6 +189,7 @@ class _ReaderScreenState extends State<ReaderScreen>
     setState(() => _loading = true);
     try {
       final text = await _pdf!.text(page);
+      final highlights = await widget.store.pdfHighlights(widget.book.id, page);
       if (!mounted || navigation != _navigation) return;
       final target = offset.clamp(0, text.length);
       if (!forAudio) {
@@ -183,6 +201,9 @@ class _ReaderScreenState extends State<ReaderScreen>
       setState(() {
         _page = page;
         _text = text;
+        _pdfHighlights = highlights;
+        _draftStrokes = [];
+        _highlighting = false;
         _targetOffset = target;
         _spokenStart = null;
         _spokenEnd = null;
@@ -406,6 +427,110 @@ class _ReaderScreenState extends State<ReaderScreen>
     await _goTo(page);
   }
 
+  Future<void> _refreshPdfHighlights() async {
+    final highlights = await widget.store.pdfHighlights(widget.book.id);
+    if (mounted) {
+      setState(() {
+        _allPdfHighlights = highlights;
+        _pdfHighlights = highlights
+            .where((highlight) => highlight.page == _page)
+            .toList();
+      });
+    }
+  }
+
+  Future<void> _recolorPdfHighlight(PdfHighlight highlight) async {
+    if (highlight.color == _highlightColor.toARGB32()) return;
+    await widget.store.updatePdfHighlightColor(
+      highlight.id,
+      _highlightColor.toARGB32(),
+    );
+    await _refreshPdfHighlights();
+  }
+
+  void _undoDraftStroke() {
+    if (_draftStrokes.isEmpty) return;
+    setState(() => _draftStrokes = List.of(_draftStrokes)..removeLast());
+  }
+
+  Future<void> _startPdfHighlight() async {
+    await _pause();
+    if (!mounted) return;
+    setState(() {
+      _original = true;
+      _highlighting = true;
+      _draftStrokes = [];
+    });
+  }
+
+  Future<void> _confirmPdfHighlight() async {
+    if (_draftStrokes.isEmpty) {
+      setState(() => _highlighting = false);
+      return;
+    }
+    final note = await textPrompt(
+      context,
+      title: '¿Qué entendiste de este resaltado?',
+      label: 'Idea, resumen o explicación (opcional)',
+      multiline: true,
+      allowEmpty: true,
+    );
+    if (note == null) return;
+    await widget.store.addPdfHighlight(
+      bookId: widget.book.id,
+      page: _page,
+      strokes: _draftStrokes,
+      note: note,
+    );
+    await _refreshPdfHighlights();
+    if (mounted) {
+      setState(() {
+        _draftStrokes = [];
+        _highlighting = false;
+      });
+    }
+  }
+
+  Future<void> _exportPdf() async {
+    if (_exporting || _pdf == null) return;
+    await _pause();
+    if (!mounted) return;
+    setState(() {
+      _exporting = true;
+      _exportProgress = 0;
+    });
+    try {
+      final bytes = await PdfExport.build(
+        title: widget.book.title,
+        source: _pdf!.document,
+        annotations: _annotations,
+        highlights: _allPdfHighlights,
+        onProgress: (completed, total) {
+          if (mounted) setState(() => _exportProgress = completed / total);
+        },
+      );
+      if (!mounted) return;
+      final saved = await FilePicker.saveFile(
+        fileName: '${widget.book.title} - anotado.pdf',
+        bytes: bytes,
+        mimeType: 'application/pdf',
+        dialogTitle: 'Guardar PDF con notas y resaltados',
+      );
+      if (saved != null && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('PDF exportado con éxito.')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _exporting = false;
+          _exportProgress = null;
+        });
+      }
+    }
+  }
+
   Iterable<Widget> _outlineTiles(List<PdfOutlineNode> nodes, int depth) sync* {
     for (final node in nodes) {
       yield ListTile(
@@ -452,38 +577,63 @@ class _ReaderScreenState extends State<ReaderScreen>
   Future<void> _notes() async {
     await _pause();
     if (!mounted) return;
-    final selected = await showModalBottomSheet<Annotation>(
-      context: context,
-      showDragHandle: true,
-      builder: (_) => SafeArea(
-        child: ListView(
-          children: [
-            const ListTile(title: Text('Tus fragmentos y notas')),
-            if (_annotations.isEmpty)
-              const Padding(
-                padding: EdgeInsets.all(24),
-                child: Text(
-                  'Mantén pulsado un fragmento en Lectura y elige Resaltar o Anotar.',
-                ),
-              ),
-            for (final annotation in _annotations)
-              ListTile(
-                leading: const Icon(Icons.bookmark_outline),
-                title: Text(
-                  annotation.quote,
-                  maxLines: 3,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                subtitle: Text(
-                  'Página ${annotation.page}'
-                  '${annotation.note.isEmpty ? '' : '\n${annotation.note}'}',
-                ),
-                onTap: () => Navigator.pop(context, annotation),
-              ),
-          ],
-        ),
-      ),
-    );
+    final selected =
+        await showModalBottomSheet<
+          ({Annotation? annotation, PdfHighlight? highlight})
+        >(
+          context: context,
+          showDragHandle: true,
+          builder: (_) => SafeArea(
+            child: ListView(
+              children: [
+                const ListTile(title: Text('Tus fragmentos y notas')),
+                if (_annotations.isEmpty && _allPdfHighlights.isEmpty)
+                  const Padding(
+                    padding: EdgeInsets.all(24),
+                    child: Text(
+                      'Resalta texto en Lectura o dibuja sobre el PDF original.',
+                    ),
+                  ),
+                for (final annotation in _annotations)
+                  ListTile(
+                    leading: const Icon(Icons.bookmark_outline),
+                    title: Text(
+                      annotation.quote,
+                      maxLines: 3,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    subtitle: Text(
+                      'Página ${annotation.page}'
+                      '${annotation.note.isEmpty ? '' : '\n${annotation.note}'}',
+                    ),
+                    onTap: () => Navigator.pop(context, (
+                      annotation: annotation,
+                      highlight: null,
+                    )),
+                  ),
+                for (final highlight in _allPdfHighlights)
+                  ListTile(
+                    leading: Icon(
+                      Icons.draw_outlined,
+                      color: Color(highlight.color),
+                    ),
+                    title: Text(
+                      highlight.note.isEmpty
+                          ? 'Resaltado del PDF'
+                          : highlight.note,
+                      maxLines: 3,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    subtitle: Text('Pág. ${highlight.page} · PDF original'),
+                    onTap: () => Navigator.pop(context, (
+                      annotation: null,
+                      highlight: highlight,
+                    )),
+                  ),
+              ],
+            ),
+          ),
+        );
     if (selected == null || !mounted) return;
     final action = await showDialog<String>(
       context: context,
@@ -503,19 +653,32 @@ class _ReaderScreenState extends State<ReaderScreen>
       ),
     );
     if (!mounted) return;
+    final annotation = selected.annotation;
+    final highlight = selected.highlight;
     if (action == 'go') {
-      setState(() => _original = false);
-      await _goTo(selected.page, offset: selected.start);
+      if (annotation != null) {
+        setState(() => _original = false);
+        await _goTo(annotation.page, offset: annotation.start);
+      } else if (highlight != null) {
+        setState(() => _original = true);
+        await _goTo(highlight.page);
+      }
     } else if (action == 'edit') {
       final note = await textPrompt(
         context,
         title: 'Editar nota',
         label: 'Tu nota',
-        initial: selected.note,
+        initial: annotation?.note ?? highlight!.note,
         multiline: true,
         allowEmpty: true,
       );
-      if (note != null) await widget.store.updateNote(selected, note);
+      if (note != null) {
+        if (annotation != null) {
+          await widget.store.updateNote(annotation, note);
+        } else if (highlight != null) {
+          await widget.store.updatePdfHighlightNote(highlight.id, note);
+        }
+      }
     } else if (action == 'delete') {
       final confirm = await showDialog<bool>(
         context: context,
@@ -534,16 +697,31 @@ class _ReaderScreenState extends State<ReaderScreen>
           ],
         ),
       );
-      if (confirm == true) await widget.store.removeAnnotation(selected.id);
+      if (confirm == true) {
+        if (annotation != null) {
+          await widget.store.removeAnnotation(annotation.id);
+        } else if (highlight != null) {
+          await widget.store.removePdfHighlight(highlight.id);
+        }
+      }
     }
     final annotations = await widget.store.annotations(widget.book.id);
-    if (mounted) setState(() => _annotations = annotations);
+    final highlights = await widget.store.pdfHighlights(widget.book.id);
+    if (mounted) {
+      setState(() {
+        _annotations = annotations;
+        _allPdfHighlights = highlights;
+        _pdfHighlights = highlights
+            .where((item) => item.page == _page)
+            .toList();
+      });
+    }
   }
 
   Color get _background => switch (_settings.theme) {
-    ReadingTheme.paper => const Color(0xFFFEFDF9),
-    ReadingTheme.sepia => const Color(0xFFF3EADA),
-    ReadingTheme.dark => const Color(0xFF1C2421),
+    ReadingTheme.paper => ProvitPalette.readingPaper,
+    ReadingTheme.sepia => ProvitPalette.readingSepia,
+    ReadingTheme.dark => ProvitPalette.readingDark,
   };
 
   @override
@@ -558,7 +736,7 @@ class _ReaderScreenState extends State<ReaderScreen>
       child: Theme(
         data: Theme.of(context).copyWith(
           colorScheme: ColorScheme.fromSeed(
-            seedColor: const Color(0xFF365C4D),
+            seedColor: ProvitPalette.brandGreen,
             brightness: dark ? Brightness.dark : Brightness.light,
             surface: _background,
           ),
@@ -585,7 +763,7 @@ class _ReaderScreenState extends State<ReaderScreen>
               ),
               PopupMenuButton<String>(
                 tooltip: 'Opciones del libro',
-                enabled: ready,
+                enabled: ready && !_exporting && !_highlighting,
                 onSelected: (value) => _perform(() async {
                   switch (value) {
                     case 'voice':
@@ -596,6 +774,10 @@ class _ReaderScreenState extends State<ReaderScreen>
                       await _listen(resume: true);
                     case 'reading':
                       await _goTo(_reading.page, offset: _reading.offset);
+                    case 'highlight':
+                      await _startPdfHighlight();
+                    case 'export':
+                      await _exportPdf();
                   }
                 }),
                 itemBuilder: (_) => const [
@@ -615,12 +797,21 @@ class _ReaderScreenState extends State<ReaderScreen>
                     value: 'reading',
                     child: Text('Volver a mi lectura'),
                   ),
+                  PopupMenuItem(
+                    value: 'highlight',
+                    child: Text('Resaltar sobre el PDF'),
+                  ),
+                  PopupMenuItem(
+                    value: 'export',
+                    child: Text('Exportar PDF con notas y trazos'),
+                  ),
                 ],
               ),
             ],
           ),
           body: Column(
             children: [
+              if (_exporting) LinearProgressIndicator(value: _exportProgress),
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
                 child: SegmentedButton<bool>(
@@ -637,7 +828,7 @@ class _ReaderScreenState extends State<ReaderScreen>
                     ),
                   ],
                   selected: {_original},
-                  onSelectionChanged: ready
+                  onSelectionChanged: ready && !_highlighting
                       ? (selection) => _perform(() async {
                           await _pause();
                           if (mounted) {
@@ -655,6 +846,86 @@ class _ReaderScreenState extends State<ReaderScreen>
                       : null,
                 ),
               ),
+              if (ready && _original && _highlighting)
+                Padding(
+                  padding: const EdgeInsets.only(
+                    left: 16,
+                    right: 16,
+                    bottom: 8,
+                  ),
+                  child: Wrap(
+                    alignment: WrapAlignment.center,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    spacing: 8,
+                    children: [
+                      for (final color in const [
+                        ProvitPalette.highlightWarm,
+                        ProvitPalette.highlightMint,
+                        ProvitPalette.highlightSky,
+                        ProvitPalette.highlightRose,
+                      ])
+                        IconButton(
+                          tooltip: 'Cambiar color de resaltado',
+                          isSelected: _highlightColor == color,
+                          style: IconButton.styleFrom(
+                            backgroundColor: _highlightColor == color
+                                ? color.withValues(alpha: 0.55)
+                                : null,
+                          ),
+                          onPressed: () =>
+                              setState(() => _highlightColor = color),
+                          icon: Icon(Icons.circle, color: color),
+                        ),
+                      IconButton(
+                        tooltip: 'Deshacer último trazo',
+                        onPressed: _draftStrokes.isEmpty
+                            ? null
+                            : _undoDraftStroke,
+                        icon: const Icon(Icons.undo),
+                      ),
+                      IconButton.filled(
+                        tooltip: 'Guardar resaltado',
+                        onPressed: () => _perform(_confirmPdfHighlight),
+                        icon: const Icon(Icons.check),
+                      ),
+                      IconButton(
+                        tooltip: 'Cancelar resaltado',
+                        onPressed: () => setState(() {
+                          _draftStrokes = [];
+                          _highlighting = false;
+                        }),
+                        icon: const Icon(Icons.close),
+                      ),
+                      SizedBox(
+                        width: 220,
+                        child: Row(
+                          children: [
+                            const Icon(Icons.line_weight),
+                            Expanded(
+                              child: Slider(
+                                value: _strokeWidth,
+                                min: 0.012,
+                                max: 0.065,
+                                divisions: 8,
+                                label: 'Grosor',
+                                onChanged: (value) =>
+                                    setState(() => _strokeWidth = value),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(
+                        width: double.infinity,
+                        child: Text(
+                          'Dibuja con el dedo sobre el PDF. Toca un trazo '
+                          'guardado para cambiarle el color.',
+                          textAlign: TextAlign.center,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               Expanded(
                 child: _loadError != null
                     ? Center(
@@ -682,13 +953,24 @@ class _ReaderScreenState extends State<ReaderScreen>
                     ? const Center(child: CircularProgressIndicator())
                     : _original
                     ? InteractiveViewer(
-                        key: ValueKey('pdf-$_page'),
+                        key: ValueKey('pdf-$_page-$_highlighting'),
                         minScale: 1,
                         maxScale: 5,
-                        child: Center(
-                          child: PdfPageView(
-                            document: _pdf!.document,
-                            pageNumber: _page,
+                        panEnabled: !_highlighting,
+                        scaleEnabled: !_highlighting,
+                        child: OriginalPdfPage(
+                          document: _pdf!.document,
+                          pageNumber: _page,
+                          highlights: _pdfHighlights,
+                          draftStrokes: _draftStrokes,
+                          highlighting: _highlighting,
+                          color: _highlightColor,
+                          strokeWidth: _strokeWidth,
+                          onStroke: (stroke) => setState(
+                            () => _draftStrokes = [..._draftStrokes, stroke],
+                          ),
+                          onRecolor: (highlight) => unawaited(
+                            _perform(() => _recolorPdfHighlight(highlight)),
                           ),
                         ),
                       )
@@ -738,18 +1020,23 @@ class _ReaderScreenState extends State<ReaderScreen>
                     children: [
                       IconButton(
                         tooltip: 'Página anterior',
-                        onPressed: ready && _page > 1
+                        onPressed: ready && !_highlighting && _page > 1
                             ? () => _perform(() => _goTo(_page - 1))
                             : null,
                         icon: const Icon(Icons.chevron_left),
                       ),
                       TextButton(
-                        onPressed: ready ? () => _perform(_jump) : null,
+                        onPressed: ready && !_highlighting
+                            ? () => _perform(_jump)
+                            : null,
                         child: Text('$_page / ${widget.book.pageCount}'),
                       ),
                       IconButton(
                         tooltip: 'Página siguiente',
-                        onPressed: ready && _page < widget.book.pageCount
+                        onPressed:
+                            ready &&
+                                !_highlighting &&
+                                _page < widget.book.pageCount
                             ? () => _perform(() => _goTo(_page + 1))
                             : null,
                         icon: const Icon(Icons.chevron_right),

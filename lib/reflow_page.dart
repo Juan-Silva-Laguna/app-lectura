@@ -1,5 +1,6 @@
 import 'package:material_ui/material_ui.dart';
 
+import 'design_system/provit_design_system.dart';
 import 'models.dart';
 
 class ReflowPage extends StatefulWidget {
@@ -60,12 +61,12 @@ class _ReflowPageState extends State<ReflowPage> {
   }
 
   TextStyle get _style => TextStyle(
-    fontFamily: widget.settings.font,
+    fontFamily: widget.settings.font == 'Sistema' ? null : widget.settings.font,
     fontSize: widget.settings.fontSize,
     height: widget.settings.lineHeight,
     color: widget.settings.theme == ReadingTheme.dark
-        ? const Color(0xFFF1EBDD)
-        : const Color(0xFF292D28),
+        ? ProvitPalette.onDark
+        : ProvitPalette.textPrimary,
   );
 
   TextPainter _painter() => TextPainter(
@@ -141,11 +142,11 @@ class _ReflowPageState extends State<ReflowPage> {
                     spokenEnd != null &&
                     sorted[i] >= spokenStart &&
                     sorted[i] < spokenEnd
-                ? const Color(0xFF99D8CD)
+                ? ProvitPalette.spokenRange
                 : widget.annotations.any(
                     (a) => sorted[i] >= a.start && sorted[i] < a.end,
                   )
-                ? const Color(0xFFF2D783)
+                ? ProvitPalette.annotationRange
                 : null,
             color:
                 widget.annotations.any(
@@ -155,7 +156,7 @@ class _ReflowPageState extends State<ReflowPage> {
                         spokenEnd != null &&
                         sorted[i] >= spokenStart &&
                         sorted[i] < spokenEnd)
-                ? const Color(0xFF202820)
+                ? ProvitPalette.textPrimary
                 : null,
           ),
         ),

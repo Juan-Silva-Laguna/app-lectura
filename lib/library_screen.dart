@@ -2,6 +2,8 @@ import 'package:file_picker/file_picker.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:path/path.dart' as p;
 
+import 'design_system/provit_design_system.dart';
+import 'design_system/provit_widgets.dart';
 import 'library_store.dart';
 import 'models.dart';
 import 'pdf_book.dart';
@@ -77,16 +79,40 @@ class _LibraryScreenState extends State<LibraryScreen> {
     if (title != null) await widget.store.rename(book, title);
   }
 
+  Future<void> _delete(Book book) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('¿Eliminar "${book.title}"?'),
+        content: const Text(
+          'Se borrarán el PDF importado, el progreso, las notas y todos los '
+          'resaltados guardados. Esta acción no se puede deshacer.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Eliminar'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) await widget.store.deleteBook(book);
+  }
+
   @override
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(
-      title: const Text('Entre líneas'),
+      title: const Text('PROVIT'),
       actions: [
         IconButton(
           tooltip: 'Privacidad y licencias',
           onPressed: () => showAboutDialog(
             context: context,
-            applicationName: 'Entre líneas',
+            applicationName: 'PROVIT',
             applicationVersion: '0.1.0 · versión inicial',
             children: const [
               Text(
@@ -106,19 +132,11 @@ class _LibraryScreenState extends State<LibraryScreen> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         if (_busy) const LinearProgressIndicator(),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(24, 24, 24, 8),
-          child: Text(
-            'Tu biblioteca',
-            style: Theme.of(context).textTheme.headlineLarge
-                ?.copyWith(fontFamily: 'Lora'),
-          ),
-        ),
-        const Padding(
-          padding: EdgeInsets.symmetric(horizontal: 24),
-          child: Text(
-            'Un espacio para leer, escuchar y recordar. Sin conexión.',
-          ),
+        const ProvitSectionHeader(
+          title: 'Tu biblioteca',
+          subtitle:
+              'Un espacio para leer, escuchar y recordar. Sin conexión.\n'
+              'Cada página tiene un propósito.',
         ),
         Expanded(
           child: FutureBuilder<List<Book>>(
@@ -149,55 +167,58 @@ class _LibraryScreenState extends State<LibraryScreen> {
               }
               final books = snapshot.requireData;
               if (books.isEmpty) {
-                return Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(32),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Icon(Icons.auto_stories_outlined, size: 80),
-                        const SizedBox(height: 24),
-                        Text(
-                          'Tu próxima lectura empieza aquí',
-                          textAlign: TextAlign.center,
-                          style: Theme.of(context).textTheme.headlineSmall,
-                        ),
-                        const SizedBox(height: 12),
-                        const Text(
-                          'Importa un PDF con texto seleccionable.\n'
-                          'Podrás nombrarlo, anotarlo y retomar donde lo dejaste.',
-                          textAlign: TextAlign.center,
-                        ),
-                      ],
-                    ),
+                return SingleChildScrollView(
+                  padding: const EdgeInsets.all(ProvitSpacing.md),
+                  child: const ProvitEmptyState(
+                    icon: Icons.auto_stories_outlined,
+                    title: 'Tu próxima lectura empieza aquí',
+                    description:
+                        'Importa un PDF con texto seleccionable.\n'
+                        'Podrás nombrarlo, anotarlo y retomar donde lo dejaste.',
                   ),
                 );
               }
               return ListView.separated(
-                padding: const EdgeInsets.fromLTRB(16, 24, 16, 100),
+                padding: const EdgeInsets.fromLTRB(
+                  ProvitSpacing.md,
+                  ProvitSpacing.lg,
+                  ProvitSpacing.md,
+                  100,
+                ),
                 itemCount: books.length,
-                separatorBuilder: (_, index) => const SizedBox(height: 8),
+                separatorBuilder: (_, index) =>
+                    const SizedBox(height: ProvitSpacing.xs),
                 itemBuilder: (context, index) {
                   final book = books[index];
                   return Card(
                     child: ListTile(
-                      contentPadding: const EdgeInsets.all(16),
+                      contentPadding: const EdgeInsets.all(ProvitSpacing.md),
                       leading: CircleAvatar(
                         child: Text(book.title.characters.first.toUpperCase()),
                       ),
-                      title: Text(
-                        book.title,
-                        style: const TextStyle(fontFamily: 'Lora'),
-                      ),
+                      title: Text(book.title),
                       subtitle: Text(
                         'Página ${book.reading.page} de ${book.pageCount} · PDF local',
                       ),
-                      trailing: IconButton(
-                        tooltip: 'Renombrar ${book.title}',
-                        onPressed: _busy
-                            ? null
-                            : () => _action(() => _rename(book)),
-                        icon: const Icon(Icons.edit_outlined),
+                      trailing: PopupMenuButton<String>(
+                        enabled: !_busy,
+                        onSelected: (action) {
+                          if (action == 'rename') {
+                            _action(() => _rename(book));
+                          } else if (action == 'delete') {
+                            _action(() => _delete(book));
+                          }
+                        },
+                        itemBuilder: (context) => const [
+                          PopupMenuItem(
+                            value: 'rename',
+                            child: Text('Renombrar'),
+                          ),
+                          PopupMenuItem(
+                            value: 'delete',
+                            child: Text('Eliminar'),
+                          ),
+                        ],
                       ),
                       onTap: _busy ? null : () => _action(() => _open(book)),
                     ),

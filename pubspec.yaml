@@ -15,6 +15,8 @@ dependencies:
   material_ui: ^1.1.0
   path: ^1.9.1
   path_provider: ^2.1.6
+  pdf: ^3.13.1
+  pdfium_dart: ^0.4.4
   pdfrx: ^3.0.1
   sqflite: ^2.4.6
   uuid: ^4.6.0
@@ -28,6 +30,9 @@ dev_dependencies:
 flutter:
   uses-material-design: true
   assets:
+    - assets/brand/logo/
+    - assets/brand/isotipo/
+    - assets/brand/app/
     - assets/fonts/Lora-OFL.txt
     - assets/fonts/Atkinson-OFL.txt
   fonts:

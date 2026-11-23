@@ -5,7 +5,9 @@ import 'dart:typed_data';
 import 'package:app_lectura/library_store.dart';
 import 'package:app_lectura/models.dart';
 import 'package:app_lectura/pdf_book.dart';
+import 'package:app_lectura/pdf_export.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path/path.dart' as p;
 import 'package:pdfrx/pdfrx.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
@@ -89,6 +91,71 @@ void main() {
       expect(reopened.reading.offset, start);
       expect((await pdf.text(1)).substring(start, start + 7), 'lectura');
       expect((await store.annotations(book.id)).single.quote, 'lectura');
+      await store.addPdfHighlight(
+        bookId: book.id,
+        page: 1,
+        strokes: [
+          PdfHighlightStroke(
+            points: const [
+              PdfHighlightPoint(0.1, 0.2),
+              PdfHighlightPoint(0.5, 0.2),
+            ],
+            color: 0xFFFFE066,
+            width: 0.025,
+          ),
+        ],
+        note: 'Idea entendida',
+      );
+      final bytes = await PdfExport.build(
+        title: book.title,
+        source: pdf.document,
+        annotations: await store.annotations(book.id),
+        highlights: await store.pdfHighlights(book.id),
+      );
+      final output = File(p.join(root.path, 'exportado.pdf'));
+      await output.writeAsBytes(bytes);
+      final exported = await PdfDocument.openFile(output.path);
+      try {
+        expect(exported.pages, hasLength(3));
+        expect(exported.pages[1].width, pdf.document.pages[0].width);
+        expect(exported.pages[1].height, pdf.document.pages[0].height);
+        final highlightedText = await exported.pages[1].loadText();
+        expect(highlightedText?.fullText.trim(), 'Primera lectura.');
+        final untouchedText = await exported.pages[2].loadText();
+        expect(untouchedText?.fullText.trim(), 'Segunda pagina.');
+        final originalImage = await pdf.document.pages[0].render(
+          width: 306,
+          height: 396,
+        );
+        final exportedImage = await exported.pages[1].render(
+          width: 306,
+          height: 396,
+        );
+        expect(originalImage, isNotNull);
+        expect(exportedImage, isNotNull);
+        try {
+          var changedPixels = 0;
+          for (
+            var index = 0;
+            index < originalImage!.pixels.length;
+            index += 4
+          ) {
+            final differs =
+                originalImage.pixels[index] != exportedImage!.pixels[index] ||
+                originalImage.pixels[index + 1] !=
+                    exportedImage.pixels[index + 1] ||
+                originalImage.pixels[index + 2] !=
+                    exportedImage.pixels[index + 2];
+            if (differs) changedPixels++;
+          }
+          expect(changedPixels, lessThan(306 * 396 * 0.12));
+        } finally {
+          originalImage?.dispose();
+          exportedImage?.dispose();
+        }
+      } finally {
+        await exported.dispose();
+      }
     } finally {
       await pdf?.close();
       await store.close();
