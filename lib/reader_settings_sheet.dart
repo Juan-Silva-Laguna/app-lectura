@@ -1,5 +1,6 @@
 import 'package:material_ui/material_ui.dart';
 
+import 'design_system/provit_design_system.dart';
 import 'models.dart';
 
 class ReaderSettingsSheet extends StatefulWidget {
@@ -16,27 +17,32 @@ class _ReaderSettingsSheetState extends State<ReaderSettingsSheet> {
   @override
   Widget build(BuildContext context) => SafeArea(
     child: SingleChildScrollView(
-      padding: const EdgeInsets.all(24),
+      padding: const EdgeInsets.all(ProvitSpacing.lg),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
           Text('A tu manera', style: Theme.of(context).textTheme.headlineSmall),
-          const SizedBox(height: 16),
+          const SizedBox(height: ProvitSpacing.md),
           const Text('Tipografía incluida · sin descargas'),
           Wrap(
-            spacing: 12,
+            spacing: ProvitSpacing.sm,
             children: [
-              for (final font in ['Lora', 'Atkinson'])
+              for (final font in ['Sistema', 'Atkinson'])
                 ChoiceChip(
-                  label: Text(font, style: TextStyle(fontFamily: font)),
+                  label: Text(
+                    font,
+                    style: TextStyle(
+                      fontFamily: font == 'Sistema' ? null : font,
+                    ),
+                  ),
                   selected: _value.font == font,
                   onSelected: (_) =>
                       setState(() => _value = _value.copyWith(font: font)),
                 ),
             ],
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: ProvitSpacing.md),
           Text('Tamaño de texto · ${_value.fontSize.round()}'),
           Slider(
             value: _value.fontSize,
@@ -58,10 +64,10 @@ class _ReaderSettingsSheetState extends State<ReaderSettingsSheet> {
                 setState(() => _value = _value.copyWith(lineHeight: height)),
           ),
           Wrap(
-            spacing: 8,
+            spacing: ProvitSpacing.xs,
             children: [
               for (final (theme, label) in [
-                (ReadingTheme.paper, 'Papel'),
+                (ReadingTheme.paper, 'Marfil'),
                 (ReadingTheme.sepia, 'Sepia'),
                 (ReadingTheme.dark, 'Noche'),
               ])
@@ -73,7 +79,7 @@ class _ReaderSettingsSheetState extends State<ReaderSettingsSheet> {
                 ),
             ],
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: ProvitSpacing.md),
           const Text('Velocidad de narración · lenta a rápida'),
           Slider(
             value: _value.speechRate,
@@ -83,16 +89,16 @@ class _ReaderSettingsSheetState extends State<ReaderSettingsSheet> {
             onChanged: (rate) =>
                 setState(() => _value = _value.copyWith(speechRate: rate)),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: ProvitSpacing.md),
           Text(
             'La lectura encuentra su propio ritmo.',
             style: TextStyle(
-              fontFamily: _value.font,
+              fontFamily: _value.font == 'Sistema' ? null : _value.font,
               fontSize: _value.fontSize,
               height: _value.lineHeight,
             ),
           ),
-          const SizedBox(height: 24),
+          const SizedBox(height: ProvitSpacing.lg),
           FilledButton(
             onPressed: () => Navigator.pop(context, _value),
             child: const Text('Guardar preferencias'),

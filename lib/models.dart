@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:math' as math;
 
 class ReadingPosition {
@@ -76,11 +77,105 @@ class Annotation {
   final String contextAfter;
 }
 
+class PdfHighlight {
+  const PdfHighlight({
+    required this.id,
+    required this.bookId,
+    required this.page,
+    required this.left,
+    required this.top,
+    required this.right,
+    required this.bottom,
+    required this.color,
+    required this.strokes,
+    required this.note,
+    required this.createdAt,
+  });
+
+  factory PdfHighlight.fromMap(Map<String, Object?> row) => PdfHighlight(
+    id: row['id'] as String,
+    bookId: row['book_id'] as String,
+    page: row['page'] as int,
+    left: (row['left'] as num).toDouble(),
+    top: (row['top'] as num).toDouble(),
+    right: (row['right'] as num).toDouble(),
+    bottom: (row['bottom'] as num).toDouble(),
+    color: row['color'] as int,
+    strokes: ((jsonDecode((row['strokes'] as String?) ?? '[]') as List)
+        .map(
+          (value) => PdfHighlightStroke.fromJson(
+            Map<String, Object?>.from(value as Map),
+          ),
+        )
+        .toList()),
+    note: (row['note'] as String?) ?? '',
+    createdAt: row['created_at'] as int,
+  );
+
+  final String id;
+  final String bookId;
+  final int page;
+  final double left;
+  final double top;
+  final double right;
+  final double bottom;
+  final int color;
+  final List<PdfHighlightStroke> strokes;
+  final String note;
+  final int createdAt;
+}
+
+class PdfHighlightPoint {
+  const PdfHighlightPoint(this.x, this.y);
+
+  factory PdfHighlightPoint.fromJson(Map<String, Object?> json) =>
+      PdfHighlightPoint(
+        (json['x'] as num).toDouble(),
+        (json['y'] as num).toDouble(),
+      );
+
+  final double x;
+  final double y;
+
+  Map<String, Object?> toJson() => {'x': x, 'y': y};
+}
+
+class PdfHighlightStroke {
+  const PdfHighlightStroke({
+    required this.points,
+    required this.color,
+    required this.width,
+  });
+
+  factory PdfHighlightStroke.fromJson(Map<String, Object?> json) =>
+      PdfHighlightStroke(
+        points: (json['points'] as List)
+            .map(
+              (point) => PdfHighlightPoint.fromJson(
+                Map<String, Object?>.from(point as Map),
+              ),
+            )
+            .toList(),
+        color: json['color'] as int,
+        width: (json['width'] as num).toDouble(),
+      );
+
+  final List<PdfHighlightPoint> points;
+  final int color;
+  final double width;
+
+  Map<String, Object?> toJson() => {
+    'points': points.map((point) => point.toJson()).toList(),
+    'color': color,
+    'width': width,
+  };
+}
+
 enum ReadingTheme { paper, sepia, dark }
 
 class ReaderSettings {
   const ReaderSettings({
-    this.font = 'Lora',
+    this.font = 'Sistema',
     this.fontSize = 21,
     this.lineHeight = 1.65,
     this.theme = ReadingTheme.sepia,

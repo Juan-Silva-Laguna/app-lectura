@@ -25,7 +25,7 @@ class LibraryStore {
     final db = await (factory ?? databaseFactory).openDatabase(
       p.join(root.path, 'library.sqlite'),
       options: OpenDatabaseOptions(
-        version: 1,
+        version: 3,
         onConfigure: (db) async {
           await db.execute('PRAGMA foreign_keys = ON');
         },
@@ -66,6 +66,22 @@ class LibraryStore {
           await db.execute(
             'CREATE TABLE settings (id INTEGER PRIMARY KEY, value TEXT NOT NULL)',
           );
+          await _createPdfHighlights(db);
+        },
+        onUpgrade: (db, oldVersion, newVersion) async {
+          if (oldVersion < 2) {
+            await _createPdfHighlights(db);
+          } else if (oldVersion < 3) {
+            await db.execute(
+              "ALTER TABLE pdf_highlights ADD COLUMN strokes TEXT NOT NULL DEFAULT '[]'",
+            );
+            await db.execute(
+              'ALTER TABLE pdf_highlights ADD COLUMN stroke_width REAL NOT NULL DEFAULT 0.025',
+            );
+            await db.execute(
+              "ALTER TABLE pdf_highlights ADD COLUMN note TEXT NOT NULL DEFAULT ''",
+            );
+          }
         },
       ),
     );
@@ -73,6 +89,29 @@ class LibraryStore {
   }
 
   String bookPath(Book book) => p.join(root.path, 'books', book.fileName);
+
+  static Future<void> _createPdfHighlights(Database db) async {
+    await db.execute('''
+      CREATE TABLE pdf_highlights (
+        id TEXT PRIMARY KEY,
+        book_id TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+        page INTEGER NOT NULL CHECK(page > 0),
+        "left" REAL NOT NULL CHECK("left" >= 0 AND "left" <= 1),
+        "top" REAL NOT NULL CHECK("top" >= 0 AND "top" <= 1),
+        "right" REAL NOT NULL CHECK("right" >= "left" AND "right" <= 1),
+        "bottom" REAL NOT NULL CHECK("bottom" >= "top" AND "bottom" <= 1),
+        color INTEGER NOT NULL,
+        strokes TEXT NOT NULL DEFAULT '[]',
+        stroke_width REAL NOT NULL DEFAULT 0.025,
+        note TEXT NOT NULL DEFAULT '',
+        created_at INTEGER NOT NULL
+      )
+    ''');
+    await db.execute(
+      'CREATE INDEX pdf_highlight_location '
+      'ON pdf_highlights(book_id, page)',
+    );
+  }
 
   Future<List<Book>> books() async => (await database.query(
     'books',
@@ -148,6 +187,21 @@ class LibraryStore {
       where: 'id = ?',
       whereArgs: [book.id],
     );
+  }
+
+  Future<void> deleteBook(Book book) async {
+    await database.transaction((transaction) async {
+      final deleted = await transaction.delete(
+        'books',
+        where: 'id = ?',
+        whereArgs: [book.id],
+      );
+      if (deleted != 1) {
+        throw StateError('El libro ya no está en la biblioteca.');
+      }
+      final file = File(bookPath(book));
+      if (await file.exists()) await file.delete();
+    });
   }
 
   Future<String?> cachedText(String bookId, int page) async {
@@ -237,6 +291,91 @@ class LibraryStore {
 
   Future<void> removeAnnotation(String id) async {
     await database.delete('annotations', where: 'id = ?', whereArgs: [id]);
+  }
+
+  Future<List<PdfHighlight>> pdfHighlights(String bookId, [int? page]) async {
+    final rows = await database.query(
+      'pdf_highlights',
+      where: page == null ? 'book_id = ?' : 'book_id = ? AND page = ?',
+      whereArgs: page == null ? [bookId] : [bookId, page],
+      orderBy: 'page, created_at',
+    );
+    return rows.map(PdfHighlight.fromMap).toList();
+  }
+
+  Future<void> addPdfHighlight({
+    required String bookId,
+    required int page,
+    required List<PdfHighlightStroke> strokes,
+    String note = '',
+  }) async {
+    if (page <= 0 || strokes.isEmpty) {
+      throw ArgumentError('El trazo resaltado no es válido.');
+    }
+    final points = strokes.expand((stroke) => stroke.points).toList();
+    if (points.isEmpty ||
+        points.any(
+          (point) => point.x < 0 || point.x > 1 || point.y < 0 || point.y > 1,
+        ) ||
+        strokes.any((stroke) => stroke.width <= 0)) {
+      throw ArgumentError('El trazo resaltado no es válido.');
+    }
+    final left = points.map((point) => point.x).reduce(math.min);
+    final top = points.map((point) => point.y).reduce(math.min);
+    final right = points.map((point) => point.x).reduce(math.max);
+    final bottom = points.map((point) => point.y).reduce(math.max);
+    await database.insert('pdf_highlights', {
+      'id': const Uuid().v4(),
+      'book_id': bookId,
+      'page': page,
+      'left': left,
+      'top': top,
+      'right': right == left ? math.min(1, right + 0.0001) : right,
+      'bottom': bottom == top ? math.min(1, bottom + 0.0001) : bottom,
+      'color': strokes.first.color,
+      'strokes': jsonEncode(strokes.map((stroke) => stroke.toJson()).toList()),
+      'stroke_width': strokes.first.width,
+      'note': note.trim(),
+      'created_at': DateTime.now().microsecondsSinceEpoch,
+    });
+  }
+
+  Future<void> updatePdfHighlightColor(String id, int color) async {
+    final rows = await database.query(
+      'pdf_highlights',
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+    if (rows.isEmpty) throw StateError('El resaltado ya no existe.');
+    final highlight = PdfHighlight.fromMap(rows.single);
+    final strokes = highlight.strokes
+        .map(
+          (stroke) => PdfHighlightStroke(
+            points: stroke.points,
+            color: color,
+            width: stroke.width,
+          ).toJson(),
+        )
+        .toList();
+    await database.update(
+      'pdf_highlights',
+      {'color': color, 'strokes': jsonEncode(strokes)},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  Future<void> removePdfHighlight(String id) async {
+    await database.delete('pdf_highlights', where: 'id = ?', whereArgs: [id]);
+  }
+
+  Future<void> updatePdfHighlightNote(String id, String note) async {
+    await database.update(
+      'pdf_highlights',
+      {'note': note.trim()},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
   }
 
   Future<ReaderSettings> settings() async {

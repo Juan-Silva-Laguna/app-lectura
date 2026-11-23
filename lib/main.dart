@@ -7,6 +7,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:pdfrx/pdfrx.dart';
 
+import 'design_system/provit_design_system.dart';
 import 'library_screen.dart';
 import 'library_store.dart';
 
@@ -28,20 +29,14 @@ class LecturaApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => MaterialApp(
-    title: 'Entre líneas',
+    title: 'PROVIT',
     debugShowCheckedModeBanner: false,
     locale: const Locale('es'),
     supportedLocales: const [Locale('es')],
     localizationsDelegates: GlobalMaterialLocalizations.delegates,
-    theme: ThemeData(
-      colorScheme: ColorScheme.fromSeed(
-        seedColor: const Color(0xFF365C4D),
-        surface: const Color(0xFFFAF7EF),
-      ),
-      fontFamily: 'Atkinson',
-      useMaterial3: true,
-      appBarTheme: const AppBarTheme(centerTitle: false),
-    ),
+    theme: ProvitTheme.light(),
+    darkTheme: ProvitTheme.dark(),
+    themeMode: ThemeMode.system,
     home: store != null ? LibraryScreen(store: store!) : const _Startup(),
   );
 }
@@ -69,23 +64,35 @@ class _StartupState extends State<_Startup> {
       if (snapshot.hasData) return LibraryScreen(store: snapshot.requireData);
       return Scaffold(
         body: Center(
-          child: Padding(
-            padding: const EdgeInsets.all(32),
-            child: snapshot.hasError
-                ? Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Icon(Icons.error_outline, size: 48),
-                      const SizedBox(height: 16),
-                      Text('No se pudo abrir la biblioteca: ${snapshot.error}'),
-                      const SizedBox(height: 16),
-                      FilledButton(
-                        onPressed: () => setState(() => _loading = _open()),
-                        child: const Text('Reintentar'),
-                      ),
-                    ],
-                  )
-                : const CircularProgressIndicator(),
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(ProvitSpacing.lg),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 420),
+              child: snapshot.hasError
+                  ? Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.error_outline, size: 48),
+                        const SizedBox(height: 16),
+                        Text(
+                          'No se pudo abrir la biblioteca: ${snapshot.error}',
+                        ),
+                        const SizedBox(height: 16),
+                        FilledButton(
+                          onPressed: () => setState(() => _loading = _open()),
+                          child: const Text('Reintentar'),
+                        ),
+                      ],
+                    )
+                  : const Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text('Cada página tiene un propósito'),
+                        SizedBox(height: ProvitSpacing.lg),
+                        CircularProgressIndicator(),
+                      ],
+                    ),
+            ),
           ),
         ),
       );
